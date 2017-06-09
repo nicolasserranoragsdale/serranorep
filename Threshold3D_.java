@@ -181,7 +181,7 @@ public class Threshold3D_ implements PlugInFilter {
 		int[][] local_contrast=new int[depth][width * height];
 		float[][] mid_gray=new float[depth][width*height];
 		for (int z = 0; z < depth; z++) {
-			IJ.showProgress(z + 1, depth/2);
+			IJ.showProgress(z + 1, depth*2);
 			for (int y = 0; y < height; y++) {
 				for (int x = 0; x < width; x++) {
 
@@ -214,13 +214,15 @@ public class Threshold3D_ implements PlugInFilter {
 							for (int k1 = -radius; k1 < radius; k1++) {
 								localValue = safeGet(z + k1 + 1, x + i, y + j);
 								
+								if (localValue >= 0) { // if not outside mask
+									
 								if (localValue>localMax)
 									localMax=localValue;
 								if (localValue<localMin)
 									localMin=localValue;
 								
-								if (localValue >= 0)  // if not outside mask
-									sumOfSquares += Math.pow((localValue-localAverage),2);
+								sumOfSquares += Math.pow((localValue-localAverage),2);
+								}
 
 							}
 						}
@@ -255,7 +257,6 @@ public class Threshold3D_ implements PlugInFilter {
 		double c=18;
 		contrastThreshold=c*meanlowstds; 
 		//use low standard deviations to determine contrast threshold in bernsten
-		IJ.showMessage("madeit");
 		
 		for (int z = 0; z < depth; z++) {
 			IJ.showProgress(depth/2+z, depth - 1);
