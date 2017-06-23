@@ -281,7 +281,7 @@ public class Threshold3D_ implements PlugInFilter {
 			newStack.addSlice("Slice " + i, newPixels);
 		}
 
-		IJ.showProgress(1, 1); // set to finished
+		IJ.showProgress(1, 1); 
 
 		ImagePlus newImage = new ImagePlus("3DThreshold", newStack);
 		new StackWindow(newImage);
