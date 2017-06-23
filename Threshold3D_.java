@@ -20,10 +20,13 @@ public class Threshold3D_ implements PlugInFilter {
 	private String myMethod;
 	private ImageStack stack;
 	private int c;
+	private int bitDepth;
  
 	public int setup(String arg, ImagePlus imp) {
 		imRef = imp;
 		stack=imp.getImageStack();
+		
+		bitDepth=imp.getBitDepth();
 		
 		if (arg.equals("about")) {
 			showAbout();
@@ -32,14 +35,21 @@ public class Threshold3D_ implements PlugInFilter {
 
 		getParams();
 
-		return DOES_8G;
+		return DOES_ALL;
 	}
 
 	private void getParams() {
 
 		// set defaults
-		baseThreshold = 128;
-		k = 5;
+		if (bitDepth == 16) {
+			baseThreshold = 40000;
+			k = 500;
+		}
+		else {
+			baseThreshold = 128;
+			k = 5;
+		}
+		
 		int diameter = 10;
 		c=18;
 
