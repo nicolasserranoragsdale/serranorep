@@ -13,6 +13,7 @@ public class Threshold3D_ implements PlugInFilter {
 	private int baseThreshold;
 	private int radius;
 	private double k;
+	private int contrastThreshold;
 	private int width;
 	private int height;
 	private int depth;
@@ -20,14 +21,15 @@ public class Threshold3D_ implements PlugInFilter {
 	private String myMethod;
 	private ImageStack stack;
 	private int c;
+	private double c2;
 	private int bitDepth;
- 
+
 	public int setup(String arg, ImagePlus imp) {
 		imRef = imp;
 		stack=imp.getImageStack();
-		
+
 		bitDepth=imp.getBitDepth();
-		
+
 		if (arg.equals("about")) {
 			showAbout();
 			return DONE;
@@ -44,24 +46,31 @@ public class Threshold3D_ implements PlugInFilter {
 		if (bitDepth == 16) {
 			baseThreshold = 40000;
 			k = 500;
+			contrastThreshold=2500;
 		}
 		else {
 			baseThreshold = 128;
 			k = 5;
+			contrastThreshold=15;
 		}
-		
+
 		int diameter = 10;
 		c=18;
+		c2=6;
 
 		GenericDialog gd = new GenericDialog(
 				"3D threshold");
 
 		gd.addNumericField("Base threshold", baseThreshold, 0);
 		gd.addNumericField("Mask diameter (pixels)", diameter, 0);
+		gd.addNumericField("Contrast Threshold", contrastThreshold, 0);
 		gd.addNumericField("low std_dev threshold", k, 1);
 		gd.addNumericField("multiplication factor for std_dev contrast threshold", c, 0);
+		gd.addNumericField("multiplication factor (Bersen Contrast)", c2, 0);
 
-		String [] methods={"std_dev_plot","BernsenKim3Dellipsoid","BernsenKim3Dsphere"};
+		String [] methods={"std_dev_plot","BernsenKim3Dellipsoid","BernsenKim3Dsphere",
+				"BernsenContrast3D"};
+		
 		gd.addChoice("Method", methods, methods[1]);
 
 		gd.showDialog();
@@ -74,8 +83,10 @@ public class Threshold3D_ implements PlugInFilter {
 
 		baseThreshold = (int) gd.getNextNumber();
 		radius = ((int) gd.getNextNumber()) / 2;
+		contrastThreshold=(int)gd.getNextNumber();
 		k = gd.getNextNumber() ;
 		c=(int)gd.getNextNumber() ;
+		c2=gd.getNextNumber();
 		myMethod=gd.getNextChoice ();
 	}
 
@@ -86,11 +97,14 @@ public class Threshold3D_ implements PlugInFilter {
 		if(myMethod.equals("std_dev_plot")){
 			std(ip);
 		}
-		else if(myMethod.equals("BernsenKim3Dsphere")){
+		/*else if(myMethod.equals("BernsenKim3Dsphere")){
 			BernsenKimsphere(ip);
-		}
+		}*/
 		else if(myMethod.equals("BernsenKim3Dellipsoid")){
 			BernsenKimellipsoid(ip);
+		}
+		else if(myMethod.equals("BernsenContrast3D")){
+			BernsenContrast3D(ip);
 		}
 	}
 
@@ -101,7 +115,7 @@ public class Threshold3D_ implements PlugInFilter {
 		width = ip.getWidth();
 		height = ip.getHeight();
 		depth = imRef.getStackSize();
-		
+
 
 		int radx=radius;
 		int rady=radius;
@@ -109,45 +123,47 @@ public class Threshold3D_ implements PlugInFilter {
 		int zmin=0;
 		int zmax=depth;
 		float local_std_dev=0;
-		
+
 		int[] ker = createKernelEllipsoid(radx, rady, radz);
-        int nb = 0;
-        for (int i=0; i<ker.length; i++)
-            nb += ker[i];
-        
-        
-        // create variable to store the new, binary image
-        float[][] imageCopy = new float[depth][width * height];
-        
-        for (int z=zmin; z<zmax; z++) {
-            if (zmin==0) IJ.showProgress(z+1, zmax);
-            for (int y=0; y<height; y++) {
-                for (int x=0; x<width; x++) {
-                    ArrayUtil tab = getNeighborhood(ker, nb, x, y, z, radx, rady, radz);
-                    local_std_dev=(float) Math.sqrt(tab.getVariance());
-                    
-                    imageCopy[z][x + y * width] = local_std_dev;
-                }
-            }
-        }
-
-		
-		
-        ImageStack newStack = new ImageStack(width, height);
-		
-		
-        for (int i = 0; i < depth; i++) {
-        	float[] newPixels = imageCopy[i];
-        	newStack.addSlice("Slice " + i, newPixels);
-        }
+		int nb = 0;
+		for (int i=0; i<ker.length; i++)
+			nb += ker[i];
 
 
-        ImagePlus newImage = new ImagePlus("3DThreshold", newStack);
-        new StackWindow(newImage);
-        
+		// create variable to store the new, binary image
+		float[][] imageCopy = new float[depth][width * height];
+
+		for (int z=zmin; z<zmax; z++) {
+			if (zmin==0) IJ.showProgress(z+1, zmax);
+			for (int y=0; y<height; y++) {
+				for (int x=0; x<width; x++) {
+					ArrayUtil tab = getNeighborhood(ker, nb, x, y, z, radx, rady, radz);
+					local_std_dev=(float) Math.sqrt(tab.getVariance());
+
+					imageCopy[z][x + y * width] = local_std_dev;
+				}
+			}
+		}
+
+
+
+		ImageStack newStack = new ImageStack(width, height);
+
+
+		for (int i = 0; i < depth; i++) {
+			float[] newPixels = imageCopy[i];
+			newStack.addSlice("Slice " + i, newPixels);
+		}
+
+
+		ImagePlus newImage = new ImagePlus("3DThreshold", newStack);
+		new StackWindow(newImage);
+
 	}
 	
-	private void BernsenKimsphere(ImageProcessor ip) {
+	//previous method inefficient
+	
+	/*private void BernsenKimsphere(ImageProcessor ip) {
 		width = ip.getWidth();
 		height = ip.getHeight();
 		depth = imRef.getStackSize();
@@ -167,7 +183,7 @@ public class Threshold3D_ implements PlugInFilter {
 		double meanlowstds=0;
 		double sumlowstds=0;
 		int countlowstds=0;
-		
+
 		int[][] local_contrast=new int[depth][width * height];
 		float[][] mid_gray=new float[depth][width*height];
 		for (int z = 0; z < depth; z++) {
@@ -221,58 +237,58 @@ public class Threshold3D_ implements PlugInFilter {
 							}
 						}
 					}
-					
+
 					local_contrast[z ][x + y * width]=localMax-localMin;
 					mid_gray[z][x + y * width]=(float)(localMax+localMin)/2;
-					
+
 					local_std_dev=Math.sqrt(sumOfSquares/(count-1));
 					if (local_std_dev < k) {
 						sumlowstds+=local_std_dev;
 						countlowstds++;
 					}
-					
-					/*localThreshold = (int) (baseThreshold - k
-							* localAverage + 0.5);
+
+					localThreshold = (int) (baseThreshold - k
+					 * localAverage + 0.5);
 
 					if (value >= localThreshold) {
 						imageCopy[z][x + y * width] = (byte) 255;
 					} else {
 						imageCopy[z][x + y * width] = (byte) 0;
-					}*/
+					}
 				}
 			}
 
 		}
-		
-		
-		
+
+
+
 		meanlowstds=sumlowstds/countlowstds;
-		
+
 
 		contrastThreshold=c*meanlowstds; 
 		//use low standard deviations to determine contrast threshold in bernsten
-		
+
 		for (int z = 0; z < depth; z++) {
 			IJ.showProgress(depth/2+z, depth - 1);
 			for (int y = 0; y < height; y++) {
 				for (int x = 0; x < width; x++) {
-					
+
 					value = 0xff & ((byte[]) imRef.getStack().getPixels(z + 1))[x+ y * width];
-					
+
 					if ( local_contrast[z][x + y * width] < contrastThreshold )
 						imageCopy[z][x + y * width] = 
-							(mid_gray[z][x + y * width] >= baseThreshold ) ? (byte) 255 :  (byte) 0;  //Low contrast region
-					else
-						imageCopy[z][x + y * width] = 
+						(mid_gray[z][x + y * width] >= baseThreshold ) ? (byte) 255 :  (byte) 0;  //Low contrast region
+						else
+							imageCopy[z][x + y * width] = 
 							(value >= mid_gray[z][x + y * width] ) ? (byte) 255 :  (byte) 0;
-	
+
 				}
 			}
 		}
-		
-		
-		
-		
+
+
+
+
 
 		ImageStack newStack = new ImageStack(width, height);
 
@@ -285,18 +301,18 @@ public class Threshold3D_ implements PlugInFilter {
 
 		ImagePlus newImage = new ImagePlus("3DThreshold", newStack);
 		new StackWindow(newImage);
-		
-	}
-	
-	
-	
-	
+
+	}*/
+
+
+
+
 	private void BernsenKimellipsoid(ImageProcessor ip) {
 		width = ip.getWidth();
 		height = ip.getHeight();
 		depth = imRef.getStackSize();
 		stack=imRef.getImageStack();
-		
+
 		double local_std_dev=0;
 		double meanlowstds=0;
 		double sumlowstds=0;
@@ -309,57 +325,79 @@ public class Threshold3D_ implements PlugInFilter {
 		int radz=radius;
 		int zmin=0;
 		int zmax=depth;
-		
+
 		int[][] local_contrast=new int[depth][width * height];
 		float[][] mid_gray=new float[depth][width*height];
-		
+
 		int[] ker = createKernelEllipsoid(radx, rady, radz);
-        int nb = 0;
-        for (int i=0; i<ker.length; i++)
-            nb += ker[i];
-        
-        for (int z=zmin; z<zmax; z++) {
-            if (zmin==0) IJ.showProgress(z+1, zmax);
-            for (int y=0; y<height; y++) {
-                for (int x=0; x<width; x++) {
-                    ArrayUtil tab = getNeighborhood(ker, nb, x, y, z, radx, rady, radz);
-                    
-                    int localMax=(int) tab.getMaximum();
-                    int localMin=(int) tab.getMinimum();
-                    local_contrast[z ][x + y * width]=localMax-localMin;
+		int nb = 0;
+		for (int i=0; i<ker.length; i++)
+			nb += ker[i];
+
+		for (int z=zmin; z<zmax; z++) {
+			if (zmin==0) IJ.showProgress(z+1, zmax);
+			for (int y=0; y<height; y++) {
+				for (int x=0; x<width; x++) {
+					ArrayUtil tab = getNeighborhood(ker, nb, x, y, z, radx, rady, radz);
+
+					int localMax=(int) tab.getMaximum();
+					int localMin=(int) tab.getMinimum();
+					local_contrast[z ][x + y * width]=localMax-localMin;
 					mid_gray[z][x + y * width]=(float)(localMax+localMin)/(float)2.0;
 					local_std_dev=Math.sqrt(tab.getVariance());
-					if (local_std_dev < k) {
+					if ((localMax-localMin) < contrastThreshold) {
 						sumlowstds+=local_std_dev;
 						countlowstds++;
 					}
-                    
-                }
-            }
-        }
-        meanlowstds=sumlowstds/(double)countlowstds;
-		
-	
+
+				}
+			}
+		}
+		meanlowstds=sumlowstds/(double)countlowstds;
+
+
 		double contrastThreshold=c*meanlowstds;
 		//double contrastThreshold=15;
-		IJ.log("contrast threshold="+ contrastThreshold);
-		
+		//IJ.log("contrast threshold="+ contrastThreshold);
+
+
 		for (int z=zmin; z<zmax; z++) {
-            IJ.showProgress(z+1, zmax);
-            for (int y=0; y<height; y++) {
-                for (int x=0; x<width; x++) {
-                	
-                	
-                	int value = (int)stack.getVoxel(x, y, z);
-                	
-                	if ( local_contrast[z][x + y * width] < contrastThreshold )
-						imageCopy[z][x + y * width] = 
-							(mid_gray[z][x + y * width] >= baseThreshold ) ? (byte) 255 :  (byte) 0;  //Low contrast region
-					else
-						imageCopy[z][x + y * width] = 
-							(value >= mid_gray[z][x + y * width] ) ? (byte) 255 :  (byte) 0;
-                }
-            }
+			int porecount=0;
+			int whitecount=0;
+			IJ.showProgress(z+1, zmax);
+			for (int y=0; y<height; y++) {
+				for (int x=0; x<width; x++) {
+
+
+					int value = (int)stack.getVoxel(x, y, z);
+
+					if ( local_contrast[z][x + y * width] < contrastThreshold ) {
+						if (mid_gray[z][x + y * width] >= baseThreshold && value!=0) {//Low contrast region
+							whitecount++;
+							imageCopy[z][x + y * width] =(byte) 255;
+						}
+						if (mid_gray[z][x + y * width] < baseThreshold && value!=0) {
+							porecount++;
+							imageCopy[z][x + y * width] =(byte) 0;
+						}
+						//imageCopy[z][x + y * width] = 
+						//	(mid_gray[z][x + y * width] >= baseThreshold ) ? (byte) 255 :  (byte) 0;  //Low contrast region
+					}
+					else {
+						if (value >= mid_gray[z][x + y * width] && value!=0) {
+							whitecount++;
+							imageCopy[z][x + y * width] =(byte) 255;
+						}
+						if (value < mid_gray[z][x + y * width] && value!=0) {
+							porecount++;
+							imageCopy[z][x + y * width] =(byte) 0;
+						}
+						//imageCopy[z][x + y * width] = 
+						//	(value >= mid_gray[z][x + y * width] ) ? (byte) 255 :  (byte) 0;
+					}
+				}
+			}
+			IJ.log(""+(float)(porecount)*100/(float)(whitecount+porecount));
 		}
 		ImageStack newStack = new ImageStack(width, height);
 
@@ -372,15 +410,142 @@ public class Threshold3D_ implements PlugInFilter {
 
 		ImagePlus newImage = new ImagePlus("3DThresholdEllipse", newStack);
 		new StackWindow(newImage);
+
+	}
+
+
+	
+	
+	private void BernsenContrast3D(ImageProcessor ip) {
+		width = ip.getWidth();
+		height = ip.getHeight();
+		depth = imRef.getStackSize();
+		stack=imRef.getImageStack();
+
 		
+		// create variable to store the new, binary image
+		byte[][] imageCopy = new byte[depth][width * height];
+
+		int radx=radius;
+		int rady=radius;
+		int radz=radius;
+		int zmin=0;
+		int zmax=depth;
+
+		int[][] local_contrast=new int[depth][width * height];
+		float[][] mid_gray=new float[depth][width*height];
+
+		int[] ker = createKernelEllipsoid(radx, rady, radz);
+		int nb = 0;
+		for (int i=0; i<ker.length; i++)
+			nb += ker[i];
+		
+		
+		
+		int sum_lowcon=0;
+		int num_lowcon=0;
+
+		for (int z=zmin; z<zmax; z++) {
+			if (zmin==0) IJ.showProgress(z+1, zmax);
+			for (int y=0; y<height; y++) {
+				for (int x=0; x<width; x++) {
+					ArrayUtil tab = getNeighborhood(ker, nb, x, y, z, radx, rady, radz);
+
+					int localMax=(int) tab.getMaximum();
+					int localMin=(int) tab.getMinimum();
+					local_contrast[z ][x + y * width]=localMax-localMin;
+					mid_gray[z][x + y * width]=(float)(localMax+localMin)/(float)2.0;
+			
+					if ((localMax-localMin) < contrastThreshold) {
+						sum_lowcon+=(localMax-localMin);
+						num_lowcon++;
+					}
+
+				}
+			}
+		}
+		double mean_lowcon=(double)sum_lowcon/(double)num_lowcon;
+		
+		double sumsquares_lowcon=0;
+		for (int z=zmin; z<zmax; z++) {
+			if (zmin==0) IJ.showProgress(z+1, zmax);
+			for (int y=0; y<height; y++) {
+				for (int x=0; x<width; x++) {
+					
+					if (local_contrast[z ][x + y * width] < contrastThreshold) {
+						sumsquares_lowcon+=(local_contrast[z ][x + y * width]-mean_lowcon)
+								*(local_contrast[z ][x + y * width]-mean_lowcon);
+					}
+
+				}
+			}
+		}
+		double std_lowcon=Math.sqrt(sumsquares_lowcon/((double)num_lowcon-1));
+		
+		double contrastThreshold=mean_lowcon+c2*std_lowcon;
+		//double contrastThreshold=15;
+		//IJ.log("contrast threshold="+ contrastThreshold);
+
+
+		for (int z=zmin; z<zmax; z++) {
+			int porecount=0;
+			int whitecount=0;
+			IJ.showProgress(z+1, zmax);
+			for (int y=0; y<height; y++) {
+				for (int x=0; x<width; x++) {
+
+
+					int value = (int)stack.getVoxel(x, y, z);
+
+					if ( local_contrast[z][x + y * width] < contrastThreshold ) {
+						if (mid_gray[z][x + y * width] >= baseThreshold && value!=0) {//Low contrast region
+							whitecount++;
+							imageCopy[z][x + y * width] =(byte) 255;
+						}
+						if (mid_gray[z][x + y * width] < baseThreshold && value!=0) {
+							porecount++;
+							imageCopy[z][x + y * width] =(byte) 0;
+						}
+						//imageCopy[z][x + y * width] = 
+						//	(mid_gray[z][x + y * width] >= baseThreshold ) ? (byte) 255 :  (byte) 0;  //Low contrast region
+					}
+					else {
+						if (value >= mid_gray[z][x + y * width] && value!=0) {
+							whitecount++;
+							imageCopy[z][x + y * width] =(byte) 255;
+						}
+						if (value < mid_gray[z][x + y * width] && value!=0) {
+							porecount++;
+							imageCopy[z][x + y * width] =(byte) 0;
+						}
+						//imageCopy[z][x + y * width] = 
+						//	(value >= mid_gray[z][x + y * width] ) ? (byte) 255 :  (byte) 0;
+					}
+				}
+			}
+			IJ.log(""+(float)(porecount)*100/(float)(whitecount+porecount));
+		}
+		ImageStack newStack = new ImageStack(width, height);
+
+		for (int i = 0; i < depth; i++) {
+			byte[] newPixels = imageCopy[i];
+			newStack.addSlice("Slice " + i, newPixels);
+		}
+
+		IJ.showProgress(1, 1); // set to finished
+
+		ImagePlus newImage = new ImagePlus("3DThresholdEllipse", newStack);
+		new StackWindow(newImage);
+
 	}
 	
 	
 	
+	
+	
+	
 
-
-
-	private int safeGet(int z, int x, int y) {
+	/*private int safeGet(int z, int x, int y) {
 
 		// Gets the value from the image, or if outside image return -1
 
@@ -396,89 +561,89 @@ public class Threshold3D_ implements PlugInFilter {
 
 		return retval;
 
-	}
-	
-	
-	
+	}*/
+
+
+
 	/**
-     * Thomas Boudier Create a kernel neighorhood as an ellipsoid
-     *
-     * @param radx Radius x of the ellipsoid
-     * @param rady Radius x of the ellipsoid
-     * @param radz Radius x of the ellipsoid
-     * @return The kernel as an array
-     */
-    private int[] createKernelEllipsoid(float radx, float rady, float radz) {
-        int vx = (int) Math.ceil(radx);
-        int vy = (int) Math.ceil(rady);
-        int vz = (int) Math.ceil(radz);
-        int[] ker = new int[(2 * vx + 1) * (2 * vy + 1) * (2 * vz + 1)];
-        double dist;
+	 * Thomas Boudier Create a kernel neighorhood as an ellipsoid
+	 *
+	 * @param radx Radius x of the ellipsoid
+	 * @param rady Radius x of the ellipsoid
+	 * @param radz Radius x of the ellipsoid
+	 * @return The kernel as an array
+	 */
+	private int[] createKernelEllipsoid(float radx, float rady, float radz) {
+		int vx = (int) Math.ceil(radx);
+		int vy = (int) Math.ceil(rady);
+		int vz = (int) Math.ceil(radz);
+		int[] ker = new int[(2 * vx + 1) * (2 * vy + 1) * (2 * vz + 1)];
+		double dist;
 
-        double rx2 = radx * radx;
-        double ry2 = rady * rady;
-        double rz2 = radz * radz;
+		double rx2 = radx * radx;
+		double ry2 = rady * rady;
+		double rz2 = radz * radz;
 
-        if (rx2 != 0) {
-            rx2 = 1.0 / rx2;
-        } else {
-            rx2 = 0;
-        }
-        if (ry2 != 0) {
-            ry2 = 1.0 / ry2;
-        } else {
-            ry2 = 0;
-        }
-        if (rz2 != 0) {
-            rz2 = 1.0 / rz2;
-        } else {
-            rz2 = 0;
-        }
+		if (rx2 != 0) {
+			rx2 = 1.0 / rx2;
+		} else {
+			rx2 = 0;
+		}
+		if (ry2 != 0) {
+			ry2 = 1.0 / ry2;
+		} else {
+			ry2 = 0;
+		}
+		if (rz2 != 0) {
+			rz2 = 1.0 / rz2;
+		} else {
+			rz2 = 0;
+		}
 
-        int idx = 0;
-        for (int k = -vz; k <= vz; k++) {
-            for (int j = -vy; j <= vy; j++) {
-                for (int i = -vx; i <= vx; i++) {
-                    dist = ((double) (i * i)) * rx2 + ((double) (j * j)) * ry2 + ((double) (k * k)) * rz2;
-                    if (dist <= 1.0) {
-                        ker[idx] = 1;
-                    } else {
-                        ker[idx] = 0;
-                    }
-                    idx++;
-                }
-            }
-        }
+		int idx = 0;
+		for (int k = -vz; k <= vz; k++) {
+			for (int j = -vy; j <= vy; j++) {
+				for (int i = -vx; i <= vx; i++) {
+					dist = ((double) (i * i)) * rx2 + ((double) (j * j)) * ry2 + ((double) (k * k)) * rz2;
+					if (dist <= 1.0) {
+						ker[idx] = 1;
+					} else {
+						ker[idx] = 0;
+					}
+					idx++;
+				}
+			}
+		}
 
-        return ker;
-    }
-    
-    
-    
-    private ArrayUtil getNeighborhood(int[] ker, int nbval, int x, int y, int z, float radx, float rady, float radz) {
-    	ArrayUtil pix = new ArrayUtil(nbval);
-        int vx = (int) Math.ceil(radx);
-        int vy = (int) Math.ceil(rady);
-        int vz = (int) Math.ceil(radz);
-        int index = 0;
-        int c = 0;
-        int sizex = stack.getWidth();
-        int sizey = stack.getHeight();
-        int sizez = stack.getSize();
-        for (int k = z - vz; k <= z + vz; k++) {
-            for (int j = y - vy; j <= y + vy; j++) {
-                for (int i = x - vx; i <= x + vx; i++) {
+		return ker;
+	}
+
+
+
+	private ArrayUtil getNeighborhood(int[] ker, int nbval, int x, int y, int z, float radx, float rady, float radz) {
+		ArrayUtil pix = new ArrayUtil(nbval);
+		int vx = (int) Math.ceil(radx);
+		int vy = (int) Math.ceil(rady);
+		int vz = (int) Math.ceil(radz);
+		int index = 0;
+		int c = 0;
+		int sizex = stack.getWidth();
+		int sizey = stack.getHeight();
+		int sizez = stack.getSize();
+		for (int k = z - vz; k <= z + vz; k++) {
+			for (int j = y - vy; j <= y + vy; j++) {
+				for (int i = x - vx; i <= x + vx; i++) {
 					if (ker[c]>0 && i>=0 && j>=0 && k>=0 && i<sizex && j<sizey && k<sizez) {
 						pix.putValue(index, (float)stack.getVoxel(i, j, k));
 						index++;
 					}
-                    c++;
-                }
-            }
-        }
-        pix.setSize(index);
-        return pix;
-    }
+					c++;
+				}
+			}
+		}
+		pix.setSize(index);
+		return pix;
+	}
 
 	void showAbout() {
 		IJ.showMessage("About Adaptive 3D Threshold..",
