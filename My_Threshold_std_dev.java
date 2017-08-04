@@ -1,5 +1,3 @@
-
-
 import ij.IJ;
 import ij.ImagePlus;
 import ij.Undo;
@@ -14,7 +12,6 @@ import ij.process.ImageConverter;
 import ij.process.ImageProcessor;
 
 public class My_Threshold_std_dev implements PlugIn {
-	private double std_thresh;
 	private int multfactor;
 	private int bitDepth;
 	private double k2;
@@ -31,7 +28,6 @@ public class My_Threshold_std_dev implements PlugIn {
 			return;
 		}
 		bitDepth=imp.getBitDepth();
-		std_thresh=5;
 		multfactor=18;
 		k2=6;
 
@@ -39,7 +35,6 @@ public class My_Threshold_std_dev implements PlugIn {
 		int contrast_thresh=15;
 		if (bitDepth == 16) {
 			mean_value = 40000;
-			std_thresh = 500;
 			contrast_thresh=2500;
 		}
 
@@ -47,7 +42,7 @@ public class My_Threshold_std_dev implements PlugIn {
 
 		// 2 - Ask for parameters:
 		GenericDialog gd = new GenericDialog("Auto Local Threshold with std_dev");
-		String [] methods={"Bernsen","BernsenOtsu", "std_dev","stdwithBernsen",
+		String [] methods={"Bernsen","BernsenOtsu",
 				"BernsenKim","Otsu","BernsenContrast"};
 		final Package p = getClass().getPackage();
 		final String version = p == null ? null : p.getImplementationVersion();
@@ -62,8 +57,7 @@ public class My_Threshold_std_dev implements PlugIn {
 			gd.addCheckbox("Stack",true);
 		}
 
-		gd.addNumericField("low std_dev threshold", std_thresh, 1);
-		gd.addNumericField("multiplication factor for std_dev contrast threshold", multfactor, 0);
+		gd.addNumericField("multiplication factor (Bernsen Kim)", multfactor, 0);
 		gd.addNumericField("multiplication factor (Bersen Contrast)", k2, 0);
 
 		gd.addMessage("Thresholded result is always shown in white [255].");
@@ -82,7 +76,6 @@ public class My_Threshold_std_dev implements PlugIn {
 		if (stackSize>1)
 			doIstack = gd.getNextBoolean ();
 
-		std_thresh = gd.getNextNumber() ;
 		multfactor=(int)gd.getNextNumber() ;
 		k2=gd.getNextNumber() ;
 
@@ -93,6 +86,7 @@ public class My_Threshold_std_dev implements PlugIn {
 		long start;
 		long end;
 		
+		//For large stack using BernsenKim or BernsenContrast
 		if ((myMethod.equals("BernsenKim") || myMethod.equals("BernsenContrast")) && stackSize>150) {
 			
 			GenericDialog gd2 = new GenericDialog("Type of Contrast Threshold");
@@ -101,7 +95,7 @@ public class My_Threshold_std_dev implements PlugIn {
 			gd2.showDialog();
 			boolean global=gd2.getNextBoolean();
 			
-			start = System.currentTimeMillis()/1000;
+			start = System.currentTimeMillis();
 			
 			if (global) {
 				
@@ -223,15 +217,15 @@ public class My_Threshold_std_dev implements PlugIn {
 				}
 			}
 			
-			end = System.currentTimeMillis()/1000;
+			end = System.currentTimeMillis();
 		}
 
 
 		
 		
-
+		//For any other methods or small stacks
 		else {
-			start = System.currentTimeMillis()/1000;
+			start = System.currentTimeMillis();
 			
 			if (stackSize>1 && doIstack ) { 
 				for (int k=1; k<=stackSize; k++){
@@ -245,10 +239,11 @@ public class My_Threshold_std_dev implements PlugIn {
 				exec(imp, myMethod, radius, par1, par2);
 			}
 			
-			end = System.currentTimeMillis()/1000;
+			end = System.currentTimeMillis();
 		}
 		
-		IJ.log("time(seconds): "+start+" "+end+"  "+(end-start));
+		IJ.log("time(seconds): "+(double)((end-start)/(double)1000));
+		
 		
 	}
 	
@@ -278,12 +273,6 @@ public class My_Threshold_std_dev implements PlugIn {
 		}
 		else if(myMethod.equals("BernsenOtsu")){
 			BernsenOtsu(imp, radius, par1, par2);
-		}
-		else if(myMethod.equals("std_dev")){
-			std(imp, radius);
-		}
-		else if(myMethod.equals("stdwithBernsen")){
-			stdwithBernsen(imp, radius, par1, par2);
 		}
 		else if(myMethod.equals("BernsenKim")){
 			if (bitDepth == 16) {
@@ -318,207 +307,7 @@ public class My_Threshold_std_dev implements PlugIn {
 		return new Object[] {imp};*/
 	}
 
-
-	private void std(ImagePlus imp, int radius) {
-		int w=imp.getWidth();
-		int h=imp.getHeight();
-		int position;
-		int radiusx2=radius * 2;
-
-		ImagePlus curr=imp;
-		ImageConverter convrt=new ImageConverter(curr);
-		convrt.convertToGray32();
-
-		ImageProcessor ip=curr.getProcessor();
-		float[] pixels = (float[]) ip.getPixels();
-		int roiy;
-
-		//
-		float[] stds=new float[pixels.length];
-		//
-
-		Roi roi = new OvalRoi(0, 0, radiusx2, radiusx2);
-		//ip.setRoi(roi);
-		for (int y =0; y<h; y++){
-			IJ.showProgress((double)(y)/(h-1)); // this method is slow, so let's show the progress bar
-			roiy = y-radius;
-			for (int x = 0; x<w; x++){
-				roi.setLocation(x-radius,roiy);
-				ip.setRoi(roi);
-				//ip.setRoi(new OvalRoi(x-radius, roiy, radiusx2, radiusx2));
-				position=x+y*w;
-
-
-				float localstd=(float)ip.getStats().stdDev;
-				stds[position]=localstd;
-
-			}
-		}
-		for (position=0; position<w*h; position++) pixels[position]= stds[position]; //update with thresholded pixels
-	}
-
-
-
-	void stdwithBernsen(ImagePlus imp, int radius, double par1, double par2) {
-		//only 8bit
-		int w=imp.getWidth();
-		int h=imp.getHeight();
-		int position;
-		int radiusx2=radius * 2;
-		float object;
-		float backg;
-		float mean_contrast=128;
-
-		if (par2!=128) {
-			IJ.log("Bernsen: changed mean_contrast from :"+ mean_contrast + "  to:" + par2);
-			mean_contrast= (float) par2;
-		}
-
-		object =  (float) 0xff;
-		backg = (float) 0;
-
-		ImagePlus curr=imp;
-		ImageConverter convrt=new ImageConverter(curr);
-		convrt.convertToGray32();
-
-		ImageProcessor ip=curr.getProcessor();
-		float[] pixels = (float[]) ip.getPixels();
-		int roiy;
-		float[] copy=new float[pixels.length];
-
-		Roi roi = new OvalRoi(0, 0, radiusx2, radiusx2);
-		//ip.setRoi(roi);
-		for (int y =0; y<h; y++){
-			IJ.showProgress((double)(y)/(h-1)); // this method is slow, so let's show the progress bar
-			roiy = y-radius;
-			for (int x = 0; x<w; x++){
-				roi.setLocation(x-radius,roiy);
-				ip.setRoi(roi);
-				//ip.setRoi(new OvalRoi(x-radius, roiy, radiusx2, radiusx2));
-				position=x+y*w;
-
-
-				float localstd=(float)ip.getStats().stdDev;
-
-				float localmax=(float) ip.getStats().max;
-				float localmin=(float) ip.getStats().min;
-				float midgray=(localmax+localmin)/2;
-
-				//standard deviation will become local threshold
-				if ( localstd < std_thresh )
-					copy[position] = ( midgray >= mean_contrast ) ? object :  backg;  //Low contrast region
-				else
-					copy[position] = (pixels[position] > midgray ) ? object : backg;
-			}
-		}
-		for (position=0; position<w*h; position++) pixels[position]=copy[position];
-	}
-
-	//only 8bit
-	void BernsenOtsu(ImagePlus imp, int radius, double par1, double par2) {
-		int[] data;
-		int w=imp.getWidth();
-		int h=imp.getHeight();
-		int position;
-		int radiusx2=radius * 2;
-		ImageProcessor ip=imp.getProcessor();
-		byte[] pixels = (byte []) ip.getPixels();
-		byte[] pixelsOut = new byte[pixels.length]; // need this to avoid changing the image data (and further histograms)
-		byte object;
-		byte backg;
-		float contrast_threshold=15;
-		float mean_contrast=128;
-
-		if (par1!=15) {
-			IJ.log("Bernsen: changed contrast_threshold from :"+ contrast_threshold + "  to:" + par1);
-			contrast_threshold= (float)par1;
-		}
-
-		if (par2!=128) {
-			IJ.log("Bernsen: changed mean_contrast from :"+ mean_contrast + "  to:" + par2);
-			mean_contrast= (float) par2;
-		}
-
-
-		object =  (byte) 0xff;
-		backg =   (byte) 0;
-
-
-
-		int k,kStar;  // k = the current threshold; kStar = optimal threshold
-		int N1, N;    // N1 = # points with intensity <=k; N = total number of points
-		double BCV, BCVmax; // The current Between Class Variance and maximum BCV
-		double num, denom;  // temporary bookeeping
-		int Sk;  // The total intensity for all histogram points <=k
-		int S, L=256; // The total intensity of the image. Need to hange here if modifying for >8 bits images
-		int roiy;
-
-		Roi roi = new OvalRoi(0, 0, radiusx2, radiusx2);
-		//ip.setRoi(roi);
-		for (int y =0; y<h; y++){
-			IJ.showProgress((double)(y)/(h-1)); // this method is slow, so let's show the progress bar
-			roiy = y-radius;
-			for (int x = 0; x<w; x++){
-				roi.setLocation(x-radius,roiy);
-				ip.setRoi(roi);
-				//ip.setRoi(new OvalRoi(x-radius, roiy, radiusx2, radiusx2));
-				position=x+y*w;
-				data = ip.getHistogram();
-
-				double localmax=ip.getStats().max;
-				double localmin=ip.getStats().min;
-				double local_contrast=localmax-localmin;
-				double midgray=(localmax+localmin)/2;
-
-				// Initialize values:
-				S = N = 0;
-				for (k=0; k<L; k++) {
-					S += k * data[k];	// Total histogram intensity
-					N += data[k];		// Total number of data points
-				}
-
-				Sk = 0;
-				N1 = data[0]; // The entry for zero intensity
-				BCV = 0;
-				BCVmax=0;
-				kStar = 0;
-
-				// Look at each possible threshold value,
-				// calculate the between-class variance, and decide if it's a max
-				for (k=1; k<L-1; k++) { // No need to check endpoints k = 0 or k = L-1
-					Sk += k * data[k];
-					N1 += data[k];
-
-					// The float casting here is to avoid compiler warning about loss of precision and
-					// will prevent overflow in the case of large saturated images
-					denom = (double)( N1) * (N - N1); // Maximum value of denom is (N^2)/4 =  approx. 3E10
-
-					if (denom != 0 ){
-						// Float here is to avoid loss of precision when dividing
-						num = ( (double)N1 / N ) * S - Sk; 	// Maximum value of num =  255*N = approx 8E7
-						BCV = (num * num) / denom;
-					}
-					else
-						BCV = 0;
-
-					if (BCV >= BCVmax){ // Assign the best threshold found so far
-						BCVmax = BCV;
-						kStar = k;
-					}
-				}
-				// kStar += 1;	// Use QTI convention that intensity -> 1 if intensity >= k
-				// (the algorithm was developed for I-> 1 if I <= k.)
-				//return kStar;
-
-				if (local_contrast < contrast_threshold)
-					pixelsOut[position] = ( midgray >= mean_contrast ) ? object :  backg;
-				else	
-					pixelsOut[position] = ((int) (pixels[position]&0xff)>kStar) ? object : backg;
-			}
-		}
-		for (position=0; position<w*h; position++) pixels[position]=pixelsOut[position]; //update with thresholded pixels
-
-	}
+	
 
 
 
@@ -703,15 +492,7 @@ public class My_Threshold_std_dev implements PlugIn {
 	}
 
 	void Bernsen(ImagePlus imp, int radius,  double par1, double par2) {
-		// Bernsen recommends WIN_SIZE = 31 and CONTRAST_THRESHOLD = 15.
-		//  1) Bernsen J. (1986) "Dynamic Thresholding of Grey-Level Images" 
-		//    Proc. of the 8th Int. Conf. on Pattern Recognition, pp. 1251-1255
-		//  2) Sezgin M. and Sankur B. (2004) "Survey over Image Thresholding 
-		//   Techniques and Quantitative Performance Evaluation" Journal of 
-		//   Electronic Imaging, 13(1): 146-165 
-		//  http://citeseer.ist.psu.edu/sezgin04survey.html
-		// Ported to ImageJ plugin from E Celebi's fourier_0.8 routines
-		// This version uses a circular local window, instead of a rectagular one
+		
 		ImagePlus Maximp, Minimp;
 		ImageProcessor ip=imp.getProcessor(), ipMax, ipMin;
 		float contrast_threshold=15;
@@ -724,7 +505,7 @@ public class My_Threshold_std_dev implements PlugIn {
 
 		if (par1!=15) {
 			//IJ.log("Bernsen: changed contrast_threshold from :"+ contrast_threshold + "  to:" + par1);
-			IJ.log(""+ par1);
+			//IJ.log(""+ par1);
 			contrast_threshold= (float) par1;
 		}
 
@@ -782,7 +563,7 @@ public class My_Threshold_std_dev implements PlugIn {
 				//pixels[i] = (temp >= mid_gray ) ? object : backg;
 			}
 		}   
-		//IJ.log(""+(float)(porecount)*100/(float)(whitecount+porecount));
+		IJ.log(""+(float)(porecount)*100/(float)(whitecount+porecount));
 		//imp.updateAndDraw();
 		return;
 	}
@@ -800,7 +581,7 @@ public class My_Threshold_std_dev implements PlugIn {
 
 		if (par1!=2500) {
 			//IJ.log("Bernsen: changed contrast_threshold from :"+ contrast_threshold + "  to:" + par1);
-			IJ.log(""+ par1);
+			//IJ.log(""+ par1);
 			contrast_threshold= (float) par1;
 		}
 
@@ -862,7 +643,7 @@ public class My_Threshold_std_dev implements PlugIn {
 				//pixels[i] = (temp >= mid_gray ) ? object : backg;
 			}
 		}
-		//IJ.log(""+(float)(porecount)*100/(float)(whitecount+porecount));
+		IJ.log(""+(float)(porecount)*100/(float)(whitecount+porecount));
 		//imp.updateAndDraw();
 		return;
 	}
@@ -888,7 +669,7 @@ public class My_Threshold_std_dev implements PlugIn {
 		for (int i=0; i<pixels.length; i++) {
 			local_contrast = ((max[i]& 0xffff) -(min[i]& 0xffff));
 
-			if ( 1 <local_contrast && local_contrast< par1) {
+			if ( (max[i]& 0xffff)!=0 && (min[i]& 0xffff)!=0 && local_contrast< par1) {
 				sum_lowcon=sum_lowcon+local_contrast;
 				num_lowcon++;
 			}
@@ -947,7 +728,7 @@ public class My_Threshold_std_dev implements PlugIn {
 		for (int i=0; i<pixels.length; i++) {
 			local_contrast = ((max[i]& 0xff) -(min[i]& 0xff));
 
-			if ( 1 <local_contrast && local_contrast< par1)
+			if ( (max[i]& 0xffff)!=0 && (min[i]& 0xffff)!=0 && local_contrast< par1)
 				sumsquares_lowcon+=(local_contrast-mean_lowcon)*(local_contrast-mean_lowcon);
 		}
 		double std_lowcon=Math.sqrt(sumsquares_lowcon/((double)num_lowcon-1));
@@ -961,7 +742,117 @@ public class My_Threshold_std_dev implements PlugIn {
 	}
 
 
+	
+	//only 8bit
+		void BernsenOtsu(ImagePlus imp, int radius, double par1, double par2) {
+			int[] data;
+			int w=imp.getWidth();
+			int h=imp.getHeight();
+			int position;
+			int radiusx2=radius * 2;
+			ImageProcessor ip=imp.getProcessor();
+			byte[] pixels = (byte []) ip.getPixels();
+			byte[] pixelsOut = new byte[pixels.length]; // need this to avoid changing the image data (and further histograms)
+			byte object;
+			byte backg;
+			float contrast_threshold=15;
+			float mean_contrast=128;
+
+			if (par1!=15) {
+				IJ.log("Bernsen: changed contrast_threshold from :"+ contrast_threshold + "  to:" + par1);
+				contrast_threshold= (float)par1;
+			}
+
+			if (par2!=128) {
+				IJ.log("Bernsen: changed mean_contrast from :"+ mean_contrast + "  to:" + par2);
+				mean_contrast= (float) par2;
+			}
+
+
+			object =  (byte) 0xff;
+			backg =   (byte) 0;
+
+
+
+			int k,kStar;  // k = the current threshold; kStar = optimal threshold
+			int N1, N;    // N1 = # points with intensity <=k; N = total number of points
+			double BCV, BCVmax; // The current Between Class Variance and maximum BCV
+			double num, denom;  // temporary bookeeping
+			int Sk;  // The total intensity for all histogram points <=k
+			int S, L=256; // The total intensity of the image. Need to hange here if modifying for >8 bits images
+			int roiy;
+
+			Roi roi = new OvalRoi(0, 0, radiusx2, radiusx2);
+			//ip.setRoi(roi);
+			for (int y =0; y<h; y++){
+				IJ.showProgress((double)(y)/(h-1)); // this method is slow, so let's show the progress bar
+				roiy = y-radius;
+				for (int x = 0; x<w; x++){
+					roi.setLocation(x-radius,roiy);
+					ip.setRoi(roi);
+					//ip.setRoi(new OvalRoi(x-radius, roiy, radiusx2, radiusx2));
+					position=x+y*w;
+					data = ip.getHistogram();
+
+					double localmax=ip.getStats().max;
+					double localmin=ip.getStats().min;
+					double local_contrast=localmax-localmin;
+					double midgray=(localmax+localmin)/2;
+
+					// Initialize values:
+					S = N = 0;
+					for (k=0; k<L; k++) {
+						S += k * data[k];	// Total histogram intensity
+						N += data[k];		// Total number of data points
+					}
+
+					Sk = 0;
+					N1 = data[0]; // The entry for zero intensity
+					BCV = 0;
+					BCVmax=0;
+					kStar = 0;
+
+					// Look at each possible threshold value,
+					// calculate the between-class variance, and decide if it's a max
+					for (k=1; k<L-1; k++) { // No need to check endpoints k = 0 or k = L-1
+						Sk += k * data[k];
+						N1 += data[k];
+
+						// The float casting here is to avoid compiler warning about loss of precision and
+						// will prevent overflow in the case of large saturated images
+						denom = (double)( N1) * (N - N1); // Maximum value of denom is (N^2)/4 =  approx. 3E10
+
+						if (denom != 0 ){
+							// Float here is to avoid loss of precision when dividing
+							num = ( (double)N1 / N ) * S - Sk; 	// Maximum value of num =  255*N = approx 8E7
+							BCV = (num * num) / denom;
+						}
+						else
+							BCV = 0;
+
+						if (BCV >= BCVmax){ // Assign the best threshold found so far
+							BCVmax = BCV;
+							kStar = k;
+						}
+					}
+					// kStar += 1;	// Use QTI convention that intensity -> 1 if intensity >= k
+					// (the algorithm was developed for I-> 1 if I <= k.)
+					//return kStar;
+
+					if (local_contrast < contrast_threshold)
+						pixelsOut[position] = ( midgray >= mean_contrast ) ? object :  backg;
+					else	
+						pixelsOut[position] = ((int) (pixels[position]&0xff)>kStar) ? object : backg;
+				}
+			}
+			for (position=0; position<w*h; position++) pixels[position]=pixelsOut[position]; //update with thresholded pixels
+
+		}
+		
+		
+		
 	//experimental. Need to remove outliers.
+	
 	/*void FindThreshold(ImagePlus imp, int radius, double par1, double par2) {
 		ImageProcessor ip=imp.getProcessor();
 		short[] pixels = (short [])ip.getPixels();
