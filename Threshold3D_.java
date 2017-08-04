@@ -6,13 +6,13 @@ import ij.gui.StackWindow;
 import ij.plugin.filter.PlugInFilter;
 import ij.process.ImageProcessor;
 import ij.util.ArrayUtil;
-
+//Class contains a few 3D adaptive thresholding methods for 8 and 16 bit greyscale images, based on
+//Bernsen.
 public class Threshold3D_ implements PlugInFilter {
 	ImagePlus imRef;
 	private boolean noGo;
 	private int baseThreshold;
 	private int radius;
-	private double k;
 	private int contrastThreshold;
 	private int width;
 	private int height;
@@ -30,11 +30,6 @@ public class Threshold3D_ implements PlugInFilter {
 
 		bitDepth=imp.getBitDepth();
 
-		if (arg.equals("about")) {
-			showAbout();
-			return DONE;
-		}
-
 		getParams();
 
 		return DOES_ALL;
@@ -42,272 +37,82 @@ public class Threshold3D_ implements PlugInFilter {
 
 	private void getParams() {
 
-		// set defaults
+		// set defaults depending on bit depth
 		if (bitDepth == 16) {
 			baseThreshold = 40000;
-			k = 500;
 			contrastThreshold=2500;
 		}
-		else {
+		else if (bitDepth == 8) {
 			baseThreshold = 128;
-			k = 5;
 			contrastThreshold=15;
 		}
 
-		int diameter = 10;
+		radius = 5;
+		//multiplication factors
 		c=18;
 		c2=6;
 
+		
+		//Create generic dialog to get user input values
 		GenericDialog gd = new GenericDialog(
 				"3D threshold");
 
 		gd.addNumericField("Base threshold", baseThreshold, 0);
-		gd.addNumericField("Mask diameter (pixels)", diameter, 0);
+		gd.addNumericField("Mask radius (pixels)", radius, 0);
 		gd.addNumericField("Contrast Threshold", contrastThreshold, 0);
-		gd.addNumericField("low std_dev threshold", k, 1);
-		gd.addNumericField("multiplication factor for std_dev contrast threshold", c, 0);
-		gd.addNumericField("multiplication factor (Bersen Contrast)", c2, 0);
+		gd.addNumericField("multiplication factor (BernsenKim)", c, 0);
+		gd.addNumericField("multiplication factor (BersenContrast)", c2, 0);
 
-		String [] methods={"std_dev_plot","BernsenKim3Dellipsoid","BernsenKim3Dsphere",
+		String [] methods={"BernsenKim3Dellipsoid",
 				"BernsenContrast3D"};
 		
-		gd.addChoice("Method", methods, methods[1]);
+		gd.addChoice("Method", methods, methods[0]);
 
 		gd.showDialog();
-
+		
 		if (gd.wasCanceled()) {
 			if (imRef != null)
 				imRef.unlock();
 			noGo = true;
 		}
 
+		
+		//set values based on user info
 		baseThreshold = (int) gd.getNextNumber();
-		radius = ((int) gd.getNextNumber()) / 2;
+		radius = ((int) gd.getNextNumber()) ;
 		contrastThreshold=(int)gd.getNextNumber();
-		k = gd.getNextNumber() ;
 		c=(int)gd.getNextNumber() ;
 		c2=gd.getNextNumber();
 		myMethod=gd.getNextChoice ();
 	}
 
 	public void run(ImageProcessor ip) {
-
 		if (noGo)
 			return;
-		if(myMethod.equals("std_dev_plot")){
-			std(ip);
-		}
-		/*else if(myMethod.equals("BernsenKim3Dsphere")){
-			BernsenKimsphere(ip);
-		}*/
-		else if(myMethod.equals("BernsenKim3Dellipsoid")){
+		
+		long start = System.currentTimeMillis();
+		
+		//choose desired method 
+		if(myMethod.equals("BernsenKim3Dellipsoid")){
 			BernsenKimellipsoid(ip);
 		}
 		else if(myMethod.equals("BernsenContrast3D")){
 			BernsenContrast3D(ip);
 		}
+		
+		long end = System.currentTimeMillis();
+		//will keep track of how long method takes
+		IJ.log("time(seconds): "+(double)((end-start)/(double)1000));
 	}
 
 
-
-
-	private void std(ImageProcessor ip) {
-		width = ip.getWidth();
-		height = ip.getHeight();
-		depth = imRef.getStackSize();
-
-
-		int radx=radius;
-		int rady=radius;
-		int radz=radius;
-		int zmin=0;
-		int zmax=depth;
-		float local_std_dev=0;
-
-		int[] ker = createKernelEllipsoid(radx, rady, radz);
-		int nb = 0;
-		for (int i=0; i<ker.length; i++)
-			nb += ker[i];
-
-
-		// create variable to store the new, binary image
-		float[][] imageCopy = new float[depth][width * height];
-
-		for (int z=zmin; z<zmax; z++) {
-			if (zmin==0) IJ.showProgress(z+1, zmax);
-			for (int y=0; y<height; y++) {
-				for (int x=0; x<width; x++) {
-					ArrayUtil tab = getNeighborhood(ker, nb, x, y, z, radx, rady, radz);
-					local_std_dev=(float) Math.sqrt(tab.getVariance());
-
-					imageCopy[z][x + y * width] = local_std_dev;
-				}
-			}
-		}
-
-
-
-		ImageStack newStack = new ImageStack(width, height);
-
-
-		for (int i = 0; i < depth; i++) {
-			float[] newPixels = imageCopy[i];
-			newStack.addSlice("Slice " + i, newPixels);
-		}
-
-
-		ImagePlus newImage = new ImagePlus("3DThreshold", newStack);
-		new StackWindow(newImage);
-
-	}
-	
-	//previous method inefficient
-	
-	/*private void BernsenKimsphere(ImageProcessor ip) {
-		width = ip.getWidth();
-		height = ip.getHeight();
-		depth = imRef.getStackSize();
-
-		// create variable to store the new, binary image
-		byte[][] imageCopy = new byte[depth][width * height];
-
-		// do the thresholding
-		int value;
-		int localValue;
-		long sum;
-		long count;
-		double contrastThreshold;
-		double localAverage;
-
-		double local_std_dev=0;
-		double meanlowstds=0;
-		double sumlowstds=0;
-		int countlowstds=0;
-
-		int[][] local_contrast=new int[depth][width * height];
-		float[][] mid_gray=new float[depth][width*height];
-		for (int z = 0; z < depth; z++) {
-			IJ.showProgress(z + 1, depth*2);
-			for (int y = 0; y < height; y++) {
-				for (int x = 0; x < width; x++) {
-
-					sum = 0;
-					count = 0;
-					localAverage = 0;
-					for (int i = -radius; i < radius; i++) {
-						for (int j = -radius; j < radius; j++) {
-							for (int k1 = -radius; k1 < radius; k1++) {
-								if(radius*radius>=i*i+j*j+k1*k1) { //check if in sphere
-									localValue = safeGet(z + k1 + 1, x + i, y + j);
-
-									if (localValue >= 0) { // if not outside image stack
-										sum += localValue;
-										count++;
-									}
-								}
-							}
-						}
-					}
-
-
-					localAverage = sum / count;
-
-					//traverse again to calculate std_dev using local average
-					double sumOfSquares=0;
-					local_std_dev=0;
-					int localMax=0;
-					int localMin=255;
-					for (int i = -radius; i < radius; i++) {
-						for (int j = -radius; j < radius; j++) {
-							for (int k1 = -radius; k1 < radius; k1++) {
-								if(radius*radius>=i*i+j*j+k1*k1) { //check if in sphere
-									localValue = safeGet(z + k1 + 1, x + i, y + j);
-
-									if (localValue >= 0) { // if not outside mask
-
-										if (localValue>localMax)
-											localMax=localValue;
-										if (localValue<localMin)
-											localMin=localValue;
-
-										sumOfSquares += Math.pow((localValue-localAverage),2);
-									}
-								}
-
-							}
-						}
-					}
-
-					local_contrast[z ][x + y * width]=localMax-localMin;
-					mid_gray[z][x + y * width]=(float)(localMax+localMin)/2;
-
-					local_std_dev=Math.sqrt(sumOfSquares/(count-1));
-					if (local_std_dev < k) {
-						sumlowstds+=local_std_dev;
-						countlowstds++;
-					}
-
-					localThreshold = (int) (baseThreshold - k
-					 * localAverage + 0.5);
-
-					if (value >= localThreshold) {
-						imageCopy[z][x + y * width] = (byte) 255;
-					} else {
-						imageCopy[z][x + y * width] = (byte) 0;
-					}
-				}
-			}
-
-		}
-
-
-
-		meanlowstds=sumlowstds/countlowstds;
-
-
-		contrastThreshold=c*meanlowstds; 
-		//use low standard deviations to determine contrast threshold in bernsten
-
-		for (int z = 0; z < depth; z++) {
-			IJ.showProgress(depth/2+z, depth - 1);
-			for (int y = 0; y < height; y++) {
-				for (int x = 0; x < width; x++) {
-
-					value = 0xff & ((byte[]) imRef.getStack().getPixels(z + 1))[x+ y * width];
-
-					if ( local_contrast[z][x + y * width] < contrastThreshold )
-						imageCopy[z][x + y * width] = 
-						(mid_gray[z][x + y * width] >= baseThreshold ) ? (byte) 255 :  (byte) 0;  //Low contrast region
-						else
-							imageCopy[z][x + y * width] = 
-							(value >= mid_gray[z][x + y * width] ) ? (byte) 255 :  (byte) 0;
-
-				}
-			}
-		}
-
-
-
-
-
-		ImageStack newStack = new ImageStack(width, height);
-
-		for (int i = 0; i < depth; i++) {
-			byte[] newPixels = imageCopy[i];
-			newStack.addSlice("Slice " + i, newPixels);
-		}
-
-		IJ.showProgress(1, 1); 
-
-		ImagePlus newImage = new ImagePlus("3DThreshold", newStack);
-		new StackWindow(newImage);
-
-	}*/
-
-
-
-
+	//Method performs a Bernsen-style thresholding algorithm on image by looking at spherical region 
+	//around each pixel. First travels through stack to store local contrast and midgray values in a 
+	//large array and to calculate a fair local threshold value based on std_dev of low contrast regions, 
+	//then sets each pixel to white or black accordingly.
+	//Note: Kernel not actually ellipsoid. It is a sphere, but can easily be modified to be ellipsoid.
 	private void BernsenKimellipsoid(ImageProcessor ip) {
+		//get dimensions
 		width = ip.getWidth();
 		height = ip.getHeight();
 		depth = imRef.getStackSize();
@@ -317,35 +122,45 @@ public class Threshold3D_ implements PlugInFilter {
 		double meanlowstds=0;
 		double sumlowstds=0;
 		int countlowstds=0;
+		
 		// create variable to store the new, binary image
 		byte[][] imageCopy = new byte[depth][width * height];
-
+		
+		//made into sphere for now
 		int radx=radius;
 		int rady=radius;
 		int radz=radius;
 		int zmin=0;
 		int zmax=depth;
 
+		//intializing large arrays to characterize spherical regions around each pixel
 		int[][] local_contrast=new int[depth][width * height];
 		float[][] mid_gray=new float[depth][width*height];
 
+		//calls method to store kernel as a boolean array
 		int[] ker = createKernelEllipsoid(radx, rady, radz);
 		int nb = 0;
 		for (int i=0; i<ker.length; i++)
 			nb += ker[i];
-
+		
+		//travel through all pixels in stack
 		for (int z=zmin; z<zmax; z++) {
 			if (zmin==0) IJ.showProgress(z+1, zmax);
 			for (int y=0; y<height; y++) {
 				for (int x=0; x<width; x++) {
+					//gets surrounding pixels
 					ArrayUtil tab = getNeighborhood(ker, nb, x, y, z, radx, rady, radz);
 
 					int localMax=(int) tab.getMaximum();
 					int localMin=(int) tab.getMinimum();
+					//store local contrast and midgray values in array using local max and min.
 					local_contrast[z ][x + y * width]=localMax-localMin;
 					mid_gray[z][x + y * width]=(float)(localMax+localMin)/(float)2.0;
-					local_std_dev=Math.sqrt(tab.getVariance());
-					if ((localMax-localMin) < contrastThreshold) {
+					
+					//if local contrast is less than the user-defined threshold and region is within
+					//bounds, consider region's std_dev
+					if (((localMax-localMin) < contrastThreshold) && localMax!=0 && localMin!=0) {
+						local_std_dev=Math.sqrt(tab.getVariance());
 						sumlowstds+=local_std_dev;
 						countlowstds++;
 					}
@@ -353,37 +168,41 @@ public class Threshold3D_ implements PlugInFilter {
 				}
 			}
 		}
+		//calculate the mean standard deviation of low contrast regions
 		meanlowstds=sumlowstds/(double)countlowstds;
 
-
+		//mean std_dev times some constant defined by user will become new contrast threshold
 		double contrastThreshold=c*meanlowstds;
-		//double contrastThreshold=15;
-		//IJ.log("contrast threshold="+ contrastThreshold);
+		IJ.log("contrast threshold="+ contrastThreshold);
 
-
+		//travel through stack again to set pixels to white or black
 		for (int z=zmin; z<zmax; z++) {
+			//variables to keep track of porosity
 			int porecount=0;
 			int whitecount=0;
 			IJ.showProgress(z+1, zmax);
 			for (int y=0; y<height; y++) {
 				for (int x=0; x<width; x++) {
 
-
+					//value of current pixel
 					int value = (int)stack.getVoxel(x, y, z);
-
-					if ( local_contrast[z][x + y * width] < contrastThreshold ) {
-						if (mid_gray[z][x + y * width] >= baseThreshold && value!=0) {//Low contrast region
+					
+					//BERNSEN
+					//First evaluates if region is high or low contrast, then changes pixel 
+					if ( local_contrast[z][x + y * width] < contrastThreshold ) { //Low contrast region
+						//make sure pixel is within valid bounds
+						if (mid_gray[z][x + y * width] >= baseThreshold && value!=0) {
 							whitecount++;
-							imageCopy[z][x + y * width] =(byte) 255;
+							imageCopy[z][x + y * width] =(byte) 255; //set to white
 						}
 						if (mid_gray[z][x + y * width] < baseThreshold && value!=0) {
 							porecount++;
-							imageCopy[z][x + y * width] =(byte) 0;
+							imageCopy[z][x + y * width] =(byte) 0; //set to black
 						}
 						//imageCopy[z][x + y * width] = 
 						//	(mid_gray[z][x + y * width] >= baseThreshold ) ? (byte) 255 :  (byte) 0;  //Low contrast region
 					}
-					else {
+					else { //High contrast region
 						if (value >= mid_gray[z][x + y * width] && value!=0) {
 							whitecount++;
 							imageCopy[z][x + y * width] =(byte) 255;
@@ -397,8 +216,10 @@ public class Threshold3D_ implements PlugInFilter {
 					}
 				}
 			}
+			//porosity level for slice
 			IJ.log(""+(float)(porecount)*100/(float)(whitecount+porecount));
 		}
+		//displays results in new stack
 		ImageStack newStack = new ImageStack(width, height);
 
 		for (int i = 0; i < depth; i++) {
@@ -408,15 +229,18 @@ public class Threshold3D_ implements PlugInFilter {
 
 		IJ.showProgress(1, 1); // set to finished
 
-		ImagePlus newImage = new ImagePlus("3DThresholdEllipse", newStack);
+		ImagePlus newImage = new ImagePlus("3DBernsenKim", newStack);
 		new StackWindow(newImage);
 
 	}
 
 
-	
-	
+	//Very similar to BernsenKim. It performs a Bernsen-style thresholding algorithm on image by looking
+	//at spherical region around each pixel. 
+	//However, when traveling through stack to store values, it calculates the mean and std_dev
+	//of the localcontrast value, instead of the pixels within the region themselves.
 	private void BernsenContrast3D(ImageProcessor ip) {
+		//get dimensions
 		width = ip.getWidth();
 		height = ip.getHeight();
 		depth = imRef.getStackSize();
@@ -426,15 +250,18 @@ public class Threshold3D_ implements PlugInFilter {
 		// create variable to store the new, binary image
 		byte[][] imageCopy = new byte[depth][width * height];
 
+		//made into sphere for now
 		int radx=radius;
 		int rady=radius;
 		int radz=radius;
 		int zmin=0;
 		int zmax=depth;
 
+		//intializing large arrays to characterize spherical regions around each pixel
 		int[][] local_contrast=new int[depth][width * height];
 		float[][] mid_gray=new float[depth][width*height];
 
+		//calls method to store kernel as a boolean array
 		int[] ker = createKernelEllipsoid(radx, rady, radz);
 		int nb = 0;
 		for (int i=0; i<ker.length; i++)
@@ -444,19 +271,24 @@ public class Threshold3D_ implements PlugInFilter {
 		
 		int sum_lowcon=0;
 		int num_lowcon=0;
-
+		
+		//travel through all pixels in stack
 		for (int z=zmin; z<zmax; z++) {
 			if (zmin==0) IJ.showProgress(z+1, zmax);
 			for (int y=0; y<height; y++) {
 				for (int x=0; x<width; x++) {
+					//gets surrounding pixels
 					ArrayUtil tab = getNeighborhood(ker, nb, x, y, z, radx, rady, radz);
 
 					int localMax=(int) tab.getMaximum();
 					int localMin=(int) tab.getMinimum();
+					//store local contrast and midgray values in array using local max and min.
 					local_contrast[z ][x + y * width]=localMax-localMin;
 					mid_gray[z][x + y * width]=(float)(localMax+localMin)/(float)2.0;
 			
-					if ((localMax-localMin) < contrastThreshold) {
+					//if local contrast is less than the user-defined threshold and region is within
+					//bounds, consider region's local contrast
+					if (((localMax-localMin) < contrastThreshold) && (localMax-localMin!=0)) {
 						sum_lowcon+=(localMax-localMin);
 						num_lowcon++;
 					}
@@ -464,15 +296,19 @@ public class Threshold3D_ implements PlugInFilter {
 				}
 			}
 		}
+		//calculate average local contrast for the low contrast regions
 		double mean_lowcon=(double)sum_lowcon/(double)num_lowcon;
 		
+		//travel through array to calculate std_dev of the localcontrasts in low contrast regions
 		double sumsquares_lowcon=0;
 		for (int z=zmin; z<zmax; z++) {
 			if (zmin==0) IJ.showProgress(z+1, zmax);
 			for (int y=0; y<height; y++) {
 				for (int x=0; x<width; x++) {
-					
-					if (local_contrast[z ][x + y * width] < contrastThreshold) {
+					 
+					//check to see if low contrast and then if it's a valid region
+					if (local_contrast[z ][x + y * width] < contrastThreshold 
+							&& local_contrast[z ][x + y * width] !=0) {
 						sumsquares_lowcon+=(local_contrast[z ][x + y * width]-mean_lowcon)
 								*(local_contrast[z ][x + y * width]-mean_lowcon);
 					}
@@ -482,12 +318,16 @@ public class Threshold3D_ implements PlugInFilter {
 		}
 		double std_lowcon=Math.sqrt(sumsquares_lowcon/((double)num_lowcon-1));
 		
+		//Mean localcontrast plus the std_dev of localcontrasts times a constant becomes new contrast
+		//threshold.
 		double contrastThreshold=mean_lowcon+c2*std_lowcon;
 		//double contrastThreshold=15;
 		//IJ.log("contrast threshold="+ contrastThreshold);
 
 
+		//travel through stack again to set pixels to white or black
 		for (int z=zmin; z<zmax; z++) {
+			//variables to keep track of porosity
 			int porecount=0;
 			int whitecount=0;
 			IJ.showProgress(z+1, zmax);
@@ -497,20 +337,22 @@ public class Threshold3D_ implements PlugInFilter {
 
 					int value = (int)stack.getVoxel(x, y, z);
 
-					if ( local_contrast[z][x + y * width] < contrastThreshold ) {
-						if (mid_gray[z][x + y * width] >= baseThreshold && value!=0) {//Low contrast region
+					//BERNSEN
+					//First evaluates if region is high or low contrast, then changes pixel 
+					if ( local_contrast[z][x + y * width] < contrastThreshold ) { //Low contrast region
+						if (mid_gray[z][x + y * width] >= baseThreshold && value!=0) {
 							whitecount++;
-							imageCopy[z][x + y * width] =(byte) 255;
+							imageCopy[z][x + y * width] =(byte) 255; //set to white
 						}
 						if (mid_gray[z][x + y * width] < baseThreshold && value!=0) {
 							porecount++;
-							imageCopy[z][x + y * width] =(byte) 0;
+							imageCopy[z][x + y * width] =(byte) 0;  //set to black
 						}
 						//imageCopy[z][x + y * width] = 
 						//	(mid_gray[z][x + y * width] >= baseThreshold ) ? (byte) 255 :  (byte) 0;  //Low contrast region
 					}
-					else {
-						if (value >= mid_gray[z][x + y * width] && value!=0) {
+					else {	      //High contrast region
+						if (value >= mid_gray[z][x + y * width] && value!=0) { 
 							whitecount++;
 							imageCopy[z][x + y * width] =(byte) 255;
 						}
@@ -523,6 +365,7 @@ public class Threshold3D_ implements PlugInFilter {
 					}
 				}
 			}
+			//porosity level for slice
 			IJ.log(""+(float)(porecount)*100/(float)(whitecount+porecount));
 		}
 		ImageStack newStack = new ImageStack(width, height);
@@ -534,7 +377,7 @@ public class Threshold3D_ implements PlugInFilter {
 
 		IJ.showProgress(1, 1); // set to finished
 
-		ImagePlus newImage = new ImagePlus("3DThresholdEllipse", newStack);
+		ImagePlus newImage = new ImagePlus("3DBernsenContrast", newStack);
 		new StackWindow(newImage);
 
 	}
@@ -545,27 +388,13 @@ public class Threshold3D_ implements PlugInFilter {
 	
 	
 
-	/*private int safeGet(int z, int x, int y) {
-
-		// Gets the value from the image, or if outside image return -1
-
-		int retval;
-
-		try {
-			retval = 0xff & ((byte[]) imRef.getStack().getPixels(z + 1))[x + y
-			                                                             * width];
-		} catch (Exception e) {
-			retval = -1;
-
-		}
-
-		return retval;
-
-	}*/
 
 
 
 	/**
+	 * Method increases efficiency by creating an array of 1 and 0's that will show us which pixels are
+	 * within the ellipsoid. Created by Thomas Boudier for adaptive filtering.
+	 * 
 	 * Thomas Boudier Create a kernel neighorhood as an ellipsoid
 	 *
 	 * @param radx Radius x of the ellipsoid
@@ -619,7 +448,8 @@ public class Threshold3D_ implements PlugInFilter {
 	}
 
 
-
+	//Also created by Thomas Boudier for adaptive filtering. Returns voxels within ellipsoid as an 
+	//ArrayUtil by checking kernel ellipsoid array.
 	private ArrayUtil getNeighborhood(int[] ker, int nbval, int x, int y, int z, float radx, float rady, float radz) {
 		ArrayUtil pix = new ArrayUtil(nbval);
 		int vx = (int) Math.ceil(radx);
@@ -645,10 +475,176 @@ public class Threshold3D_ implements PlugInFilter {
 		return pix;
 	}
 
-	void showAbout() {
-		IJ.showMessage("About Adaptive 3D Threshold..",
-				"This plugin thresholds a stack according to the threshold "
-						+ "T = (1-w)*base - w*avg(radius^3 neighbour-base)");
+	
+	
+	
+	//previous method inefficient. No longer in use.
+	
+	
+	
+/*	 * $Id: Adapative3DThreshold_.java,v 1.22 2005/07/05 12:40:32 perchrh Exp $
+	 * 
+	 * Created by Per Christian Henden. Free software in the public domain.*/
+	
+		/*private void BernsenKimsphere(ImageProcessor ip) {
+			width = ip.getWidth();
+			height = ip.getHeight();
+			depth = imRef.getStackSize();
+
+			// create variable to store the new, binary image
+			byte[][] imageCopy = new byte[depth][width * height];
+
+			// do the thresholding
+			int value;
+			int localValue;
+			long sum;
+			long count;
+			double contrastThreshold;
+			double localAverage;
+
+			double local_std_dev=0;
+			double meanlowstds=0;
+			double sumlowstds=0;
+			int countlowstds=0;
+
+			int[][] local_contrast=new int[depth][width * height];
+			float[][] mid_gray=new float[depth][width*height];
+			for (int z = 0; z < depth; z++) {
+				IJ.showProgress(z + 1, depth*2);
+				for (int y = 0; y < height; y++) {
+					for (int x = 0; x < width; x++) {
+
+						sum = 0;
+						count = 0;
+						localAverage = 0;
+						for (int i = -radius; i < radius; i++) {
+							for (int j = -radius; j < radius; j++) {
+								for (int k1 = -radius; k1 < radius; k1++) {
+									if(radius*radius>=i*i+j*j+k1*k1) { //check if in sphere
+										localValue = safeGet(z + k1 + 1, x + i, y + j);
+
+										if (localValue >= 0) { // if not outside image stack
+											sum += localValue;
+											count++;
+										}
+									}
+								}
+							}
+						}
+
+
+						localAverage = sum / count;
+
+						//traverse again to calculate std_dev using local average
+						double sumOfSquares=0;
+						local_std_dev=0;
+						int localMax=0;
+						int localMin=255;
+						for (int i = -radius; i < radius; i++) {
+							for (int j = -radius; j < radius; j++) {
+								for (int k1 = -radius; k1 < radius; k1++) {
+									if(radius*radius>=i*i+j*j+k1*k1) { //check if in sphere
+										localValue = safeGet(z + k1 + 1, x + i, y + j);
+
+										if (localValue >= 0) { // if not outside mask
+
+											if (localValue>localMax)
+												localMax=localValue;
+											if (localValue<localMin)
+												localMin=localValue;
+
+											sumOfSquares += Math.pow((localValue-localAverage),2);
+										}
+									}
+
+								}
+							}
+						}
+
+						local_contrast[z ][x + y * width]=localMax-localMin;
+						mid_gray[z][x + y * width]=(float)(localMax+localMin)/2;
+
+						local_std_dev=Math.sqrt(sumOfSquares/(count-1));
+						if (local_std_dev < k) {
+							sumlowstds+=local_std_dev;
+							countlowstds++;
+						}
+
+						localThreshold = (int) (baseThreshold - k
+						 * localAverage + 0.5);
+
+						if (value >= localThreshold) {
+							imageCopy[z][x + y * width] = (byte) 255;
+						} else {
+							imageCopy[z][x + y * width] = (byte) 0;
+						}
+					}
+				}
+
+			}
+
+
+
+			meanlowstds=sumlowstds/countlowstds;
+
+
+			contrastThreshold=c*meanlowstds; 
+			//use low standard deviations to determine contrast threshold in bernsten
+
+			for (int z = 0; z < depth; z++) {
+				IJ.showProgress(depth/2+z, depth - 1);
+				for (int y = 0; y < height; y++) {
+					for (int x = 0; x < width; x++) {
+
+						value = 0xff & ((byte[]) imRef.getStack().getPixels(z + 1))[x+ y * width];
+
+						if ( local_contrast[z][x + y * width] < contrastThreshold )
+							imageCopy[z][x + y * width] = 
+							(mid_gray[z][x + y * width] >= baseThreshold ) ? (byte) 255 :  (byte) 0;  //Low contrast region
+							else
+								imageCopy[z][x + y * width] = 
+								(value >= mid_gray[z][x + y * width] ) ? (byte) 255 :  (byte) 0;
+
+					}
+				}
+			}
+
+
+
+
+
+			ImageStack newStack = new ImageStack(width, height);
+
+			for (int i = 0; i < depth; i++) {
+				byte[] newPixels = imageCopy[i];
+				newStack.addSlice("Slice " + i, newPixels);
+			}
+
+			IJ.showProgress(1, 1); 
+
+			ImagePlus newImage = new ImagePlus("3DThreshold", newStack);
+			new StackWindow(newImage);
+
+		}*/
+	
+	
+	
+	/*private int safeGet(int z, int x, int y) {
+
+	// Gets the value from the image, or if outside image return -1
+
+	int retval;
+
+	try {
+		retval = 0xff & ((byte[]) imRef.getStack().getPixels(z + 1))[x + y
+		                                                             * width];
+	} catch (Exception e) {
+		retval = -1;
+
 	}
+
+	return retval;
+
+}*/
 
 }
